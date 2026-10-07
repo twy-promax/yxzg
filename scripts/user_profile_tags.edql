@@ -1,0 +1,93 @@
+# 启动es-head服务：'nohup npm run start > ./head.log 2>&1 &'
+
+# 创建索引，指定逗号分词器
+# "type":"pattern"  说明这个分词器使用字符/符号进行分词
+# "pattern":","   分词的规则/模式 是逗号
+PUT user_profile_tags
+{
+  "settings": {
+    "analysis": {
+      "analyzer":{
+        "comma":{
+          "type":"pattern",
+          "pattern":","
+        }
+      }
+    }
+  }
+}
+
+# 指定字段信息
+# "analyzer": "comma","search_analyzer":"comma" 指定分词的时候和检索的时候使用之前创建的逗号分词器
+# 注意：这里创建了3个tags_id的字段，因为标签的计算方式和更新方式是不同的。
+# tags_id_once：用来存储离线计算，并一次性更新的标签
+# tags_id_times：用来存储离线计算，每次单独更新的标签，因为计算的标签比较多，所以会更新多次
+# tags_id_streaming：用来存储实时计算标签，标签会更新多次
+#
+# 分开创建标签的原因有3点：
+#（1）对于离线计算并全量更新的标签，需要单独创建一个字段，这样直接进行更新即可。这类标签主要基于Spark SQL来计算。
+#（2）对于实时计算并更新的标签，考虑到索引的构建和更新的性能问题，需要单独存储在一个字段，避免和所有标签存在一起导致标签数量太大更新慢，从而加快索引创建和更新的速度。这类标签主要基于Spark Streaming来计算。
+#（3）除了以上两种标签外，还有一种需要离线计算然后单个更新，这类单独存储在一个字段，方便开发和使用。这类标签主要基于Spark ML和Spark DSL来计算。
+
+POST user_profile_tags/_mapping
+{
+  "properties" : {
+    "user_id": {
+      "type": "long"
+    },
+    "tags_id_once": {
+      "type": "text", "analyzer": "comma", "search_analyzer":"comma"
+    },
+    "tags_id_times": {
+      "type": "text", "analyzer": "comma", "search_analyzer":"comma"
+    },
+    "tags_id_streaming": {
+      "type": "text", "analyzer": "comma", "search_analyzer":"comma"
+    }
+  }
+}
+
+# 注意：上面的 mapping 没有定义实时的标签更新时间字段（如 conversion_rate_time、active_tag_time），
+# 也没有设置 dynamic。索引走 ES 默认的 dynamic=true，这些 *_time 字段是写入时自动创建的，
+# 类型被推断为 text（"2026-09-26 23:33:50" 不符合 ES 默认的 strict_date_optional_time 格式）。
+# 当前仅供前端展示，不能按时间范围查询/排序。若要改成 date 类型，需 reindex 重建索引。
+# 详见 tags/streaming/CLAUDE.md
+
+# 测试逗号分词
+PUT /user_profile_tags/_doc/1
+{
+  "user_id":1,
+  "tags_id_once":"19,8,6,67,27,30,119,55,43,49,57,62"
+}
+
+PUT /user_profile_tags/_doc/2
+{
+  "user_id":2,
+  "tags_id_once":"20,12,6,66,27,30,114,55,39,48,57,63"
+}
+
+PUT /user_profile_tags/_doc/3
+{
+  "user_id":3,
+  "tags_id_once":"17,8,5,67,27,30,114,55,39,48,57,63"
+}
+
+# 测试完成后删除
+POST /user_profile_tags/_delete_by_query?pretty
+{
+  "query": {
+    "match_all": {
+    }
+  }
+}
+
+# 黄色警告处理
+# 在Linux中'curl -XPUT http://192.168.88.166:9200/_settings?pretty -d '{ "index": { "number_of_replicas": 0 } }' -H "Content-Type: application/json"'
+POST user_profile_tags/_search
+{
+  "query": {
+    "bool": {
+      "must": []
+    }
+  }
+}

@@ -1,0 +1,47 @@
+env {
+  parallelism = 1
+  job.mode = "STREAMING"
+  checkpoint.interval = 10000
+}
+
+source {
+  MySQL-CDC {
+    base-url = "jdbc:mysql://up01:3306/hive_data"
+    username = "root"
+    password = "123456"
+    start.mode = "initial"
+    server-time-zone = "Asia/Shanghai"
+    table-names = ["hive_data.shop_order"]
+    table-names-config = [
+      {
+        table = "hive_data.shop_order"
+        primaryKeys = ["id"]
+      }
+    ]
+    
+    format = compatible_debezium_json
+    debezium = {
+        # include schema into kafka message
+        key.converter.schemas.enable = false
+        value.converter.schemas.enable = false
+        # include ddl
+        include.schema.changes = true
+        # topic prefix
+        database.server.name =  "mysql_cdc"
+    }
+  }
+}
+
+sink {
+  kafka {
+      topic = "test_topic"
+      bootstrap.servers = "up01:9092"
+      format = compatible_debezium_json
+      transaction_prefix = "sot"
+      kafka.config = {
+        acks = "all"
+        request.timeout.ms = 60000
+        buffer.memory = 33554432
+      }
+  }
+}
